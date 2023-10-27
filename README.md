@@ -1,1 +1,3 @@
-# scroll-sync
+# Scroll Two LibreOffice Text Documents Simultaneously
+
+This is currently a work-in-progress...
