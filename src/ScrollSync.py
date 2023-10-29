@@ -13,6 +13,7 @@ from com.sun.star.ui.dialogs.ExecutableDialogResults import OK, CANCEL
 #   - OOO Writer API: https://wiki.openoffice.org/wiki/Writer/API/
 #   - https://www.pitonyak.org/oo.php
 #   - https://wiki.documentfoundation.org/Macros/Python_Design_Guide
+#   - https://help.libreoffice.org/6.3/en-US/text/sbasic/python/python_programming.html
 
 # _MY_BUTTON = "CommandButton1"
 # _MY_BUTTON2 = "CommandButton2"
@@ -32,21 +33,28 @@ class ActionListener(unohelper.Base, XActionListener):
     def disposing(self, evt: EventObject):
         pass
 
-class ScrollGui():
+class ScrollSync():
     def __init__(self):
+        self.error = False
         self.ctx = uno.getComponentContext()
         self.smgr = self.ctx.ServiceManager
         self.desktop = self.smgr.createInstanceWithContext('com.sun.star.frame.Desktop', self.ctx)
-        self.dlgprov = self.smgr.createInstanceWithContext('com.sun.star.awt.DialogProvider', self.ctx)
-        dlgpath = 'Standard.DlgScrollSync?location=appliation'
+        self.tk = self.smgr.createInstanceWithContext('com.sun.star.awt.Toolkit', self.ctx)
+        self.parent = self.tk.getDesktopWindow()
+        # TODO: Dialog takes focus and blocks access to doc. I want something like
+        # self.dlgprov = self.smgr.createInstanceWithContext('com.sun.star.awt.DialogProvider', self.ctx)
+        # dlgpath = 'Standard.DlgScrollSync?location=application'
         # self.dlg = self.dlgprov.createDialog(f"vnd.sun.star.script:{dlgpath}")
+        #   a menu with radio choices that can have a default but be easily changed.
+        # self.dlg.execute()
         self.active, self.inactive = self.get_docs()
 
     def get_docs(self):
         text_docs = [d for d in self.desktop.Components if d.supportsService('com.sun.star.text.TextDocument')]
         if len(text_docs) != 2:
-            errbox("There needs to be exactly two Text documents open to run this macro.")
-            return None
+            self.msgbox("There needs to be exactly two Text documents open to run this macro.", 'errorbox')
+            self.error = True
+            return None, None
         # TODO: Change "compatible" to mean "same initial paragraph styles IF syncing by heading/paragraph"
         # # Verify that both docs have the same number and type of significant paragraphs.
         # if not docs_are_compatible(text_docs):
@@ -64,6 +72,11 @@ class ScrollGui():
             if doc == two_docs[i]:
                 return i
         return None
+
+    def msgbox(self, message, type_msg='infobox'):
+        buttons = MSG_BUTTONS.BUTTONS_OK
+        mb = self.tk.createMessageBox(self.parent, type_msg, buttons, "ScrollSync", str(message))
+        return mb.execute()
 
 class ScrollDocument():
     def __init__(self, doc=None):
@@ -178,22 +191,6 @@ def get_paragraph_index(doc, paragraph):
         if paragraph.String == p.String:
             return i
     return None
-
-def msgbox(message, title='LibreOffice', buttons=MSG_BUTTONS.BUTTONS_OK, type_msg='infobox'):
-    """ Create message box
-        type_msg: infobox, warningbox, errorbox, querybox, messbox
-        https://api.libreoffice.org/docs/idl/ref/interfacecom_1_1sun_1_1star_1_1awt_1_1XMessageBoxFactory.html
-    """
-    toolkit = create_instance('com.sun.star.awt.Toolkit')
-    parent = toolkit.getDesktopWindow()
-    box = toolkit.createMessageBox(parent, type_msg, buttons, title, str(message))
-    return mb.execute()
-
-def errbox(message, title='Sync Cursors', buttons=MSG_BUTTONS.BUTTONS_OK, type_msg='errorbox'):
-    toolkit = create_instance('com.sun.star.awt.Toolkit')
-    parent = toolkit.getDesktopWindow()
-    box = toolkit.createMessageBox(parent, type_msg, buttons, title, str(message))
-    box.execute()
 
 def create_instance(name, with_context=False):
     if with_context:
@@ -314,19 +311,25 @@ def updateInactiveDocCursorPosition():
     scroll_to_active_scrollbar_value(vsb_active, vsb_inactive)
 
 def updateByScrollbarPercentage():
-    app = ScrollGui()
+    """Scroll the inactive document the same percent distance as the active document."""
+    app = ScrollSync()
+    if app.error:
+        return
     app.inactive.set_rel_scrollbar_pos(app.active.get_rel_scrollbar_pos())
 
 def updateByScrollbarValue():
-    app = ScrollGui()
+    """Scroll the inactive document to the same line number as the active document."""
+    app = ScrollSync()
+    if app.error:
+        return
     app.inactive.set_abs_scrollbar_pos(app.active.scroll_position)
 
 def updateByHeadingPosition():
-    app = ScrollGui()
+    app = ScrollSync()
     # TODO.
 
 def updateByParagraphPosition():
-    app = ScrollGui()
+    app = ScrollSync()
     # TODO.
 
 g_exportedScripts = (
