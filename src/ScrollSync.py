@@ -3,10 +3,9 @@ import uno
 import unohelper
 
 from com.sun.star.awt import MessageBoxButtons as MSG_BUTTONS
-from com.sun.star.awt import XActionListener
+from com.sun.star.awt import XAdjustmentListener
 from com.sun.star.awt import ActionEvent
 from com.sun.star.lang import EventObject
-from com.sun.star.ui.dialogs.ExecutableDialogResults import OK, CANCEL
 
 # References:
 #   - UNO API: https://api.libreoffice.org/docs/idl/ref/
@@ -15,39 +14,40 @@ from com.sun.star.ui.dialogs.ExecutableDialogResults import OK, CANCEL
 #   - https://wiki.documentfoundation.org/Macros/Python_Design_Guide
 #   - https://help.libreoffice.org/6.3/en-US/text/sbasic/python/python_programming.html
 
-# _MY_BUTTON = "CommandButton1"
-# _MY_BUTTON2 = "CommandButton2"
-# _MY_LABEL = 'Python listens...'
-# _DLG_PROVIDER = "com.sun.star.awt.DialogProvider"
 
-class ActionListener(unohelper.Base, XActionListener):
-    def __init__(self):
-        self.count = 0
+class AdjustmentListener(unohelper.Base, XAdjustmentListener):
+    def __init__(self, sync_type, active_doc, inactive_doc):
+        self.sync_type = sync_type
+        self.active_doc = active_doc
+        self.inactive_doc = inactive_doc
 
-    def actionPerformed(self, evt: ActionEvent):
-        self.count += 1
-        if evt.Source.Model.name == _MY_BUTTON:
-            evt.Source.Model.Label = f"{_MY_LABEL} {self.count}"
-        # return
+    def adjustmentValueChanged(self, evt: ActionEvent):
+        # print(evt)
+        if self.sync_type == 'ScrollbarPercentage':
+            new_pos = self.active_doc.get_rel_scrollbar_pos()
+            self.inactive_doc.set_rel_scrollbar_pos(new_pos)
+        elif self.sync_type == 'ScrollbarValue':
+            new_pos = self.active_doc.get_abs_scrollbar_pos()
+            self.inactive_doc.set_abs_scrollbar_pos(new_pos)
 
     def disposing(self, evt: EventObject):
         pass
 
 class ScrollSync():
-    def __init__(self):
+    def __init__(self, sync_type):
+        self.sync_type = sync_type
         self.error = False
         self.ctx = uno.getComponentContext()
         self.smgr = self.ctx.ServiceManager
+
         self.desktop = self.smgr.createInstanceWithContext('com.sun.star.frame.Desktop', self.ctx)
         self.tk = self.smgr.createInstanceWithContext('com.sun.star.awt.Toolkit', self.ctx)
         self.parent = self.tk.getDesktopWindow()
-        # TODO: Dialog takes focus and blocks access to doc. I want something like
-        # self.dlgprov = self.smgr.createInstanceWithContext('com.sun.star.awt.DialogProvider', self.ctx)
-        # dlgpath = 'Standard.DlgScrollSync?location=application'
-        # self.dlg = self.dlgprov.createDialog(f"vnd.sun.star.script:{dlgpath}")
-        #   a menu with radio choices that can have a default but be easily changed.
-        # self.dlg.execute()
         self.active, self.inactive = self.get_docs()
+        l_active = AdjustmentListener(self.sync_type, self.active, self.inactive)
+        l_inactive = AdjustmentListener(self.sync_type, self.inactive, self.active)
+        self.active.scrollbar.addAdjustmentListener(l_active)
+        self.inactive.scrollbar.addAdjustmentListener(l_inactive)
 
     def get_docs(self):
         text_docs = [d for d in self.desktop.Components if d.supportsService('com.sun.star.text.TextDocument')]
@@ -61,10 +61,10 @@ class ScrollSync():
         #     msg = f"Docs are not compatible (different number and/or style of paragraphs)."
         #     errbox(msg)
         #     return
-        active = ScrollDocument(self.desktop.getCurrentComponent())
+        active = ScrollDocument(self.desktop.getCurrentComponent(), self.ctx)
         # TODO: "Inactive" could actually be a list...
         inactive_doc_index = 1 - self.get_doc_index(active.doc, text_docs)
-        inactive = ScrollDocument(text_docs[inactive_doc_index])
+        inactive = ScrollDocument(text_docs[inactive_doc_index], self.ctx)
         return (active, inactive)
 
     def get_doc_index(self, doc, two_docs):
@@ -79,7 +79,12 @@ class ScrollSync():
         return mb.execute()
 
 class ScrollDocument():
-    def __init__(self, doc=None):
+    def __init__(self, doc=None, ctx=None):
+        self.ctx = None
+        if ctx is not None:
+            self.ctx = ctx
+        self.smgr = self.ctx.ServiceManager
+
         self.doc = doc
         self.title = self.doc.Title
         self.view_cursor = self.get_view_cursor()
@@ -102,16 +107,11 @@ class ScrollDocument():
     def get_scrollbar(self):
         win_ctx = self.doc.CurrentController.Frame.getComponentWindow().getAccessibleContext()
         ch_ctx = win_ctx.getAccessibleChild(0).getAccessibleContext()
-        vscroll_names = [
-            'Vertical scroll bar',
-            'Barre de défilement verticale',
-        ]
         for i in range(ch_ctx.getAccessibleChildCount()):
             c = ch_ctx.getAccessibleChild(i)
-            c_ctx = c.getAccessibleContext()
-            # print(c_ctx.AccessibleName) # TODO: Locale-dependent!
-            if c_ctx.ImplementationName == 'com.sun.star.comp.toolkit.AccessibleScrollBar' and c_ctx.AccessibleName in vscroll_names:
-                return c_ctx
+            c_ctx = c.AccessibleContext
+            if c_ctx.ImplementationName == 'com.sun.star.comp.toolkit.AccessibleScrollBar' and c.Orientation == 1:
+                return c
         return None
 
     def get_view_cursor(self):
@@ -142,41 +142,27 @@ class ScrollDocument():
         pass
 
     def get_abs_scrollbar_pos(self):
-        return self.scrollbar.CurrentValue
+        return self.scrollbar.AccessibleContext.CurrentValue
 
     def set_abs_scrollbar_pos(self, value):
-        self.scrollbar.setCurrentValue(int(value))
+        self.scrollbar.AccessibleContext.setCurrentValue(int(value))
 
     def get_rel_scrollbar_pos(self):
-        totaly = float(self.scrollbar.MaximumValue)
-        currenty = float(self.scrollbar.CurrentValue)
+        totaly = float(self.scrollbar.AccessibleContext.MaximumValue)
+        currenty = float(self.scrollbar.AccessibleContext.CurrentValue)
         relativey = round(currenty / totaly, 2)
         return relativey
 
     def set_rel_scrollbar_pos(self, value):
-        totaly = float(self.scrollbar.MaximumValue)
+        totaly = float(self.scrollbar.AccessibleContext.MaximumValue)
         absy = int(float(value) * totaly)
         self.set_abs_scrollbar_pos(absy)
+
 
 def MsgBox(txt: str):
     mb = util.MsgBox(uno.getComponentContext())
     mb.addButton("OK")
     mb.show(txt, 0, "Python")
-
-def createUnoDialog(libr_dlg: str, embedded=False):
-    ctx = XSCRIPTCONTEXT.getComponentContext()
-    smgr = ctx.ServiceManager
-    if embedded:
-        model = XSCRIPTCONTEXT.getDocument()
-        dp = smgr.createInstanceWithArguments(_DLG_PROVIDER, (model,))
-        # dp = SM.createInstanceWithArguments(_DLG_PROVIDER, (model,))
-        location = '?location=document'
-    else:
-        dp = smgr.createInstanceWithContext(_DLG_PROVIDER, ctx)
-        print(type(dp))
-        location = '?location=application'
-    dlg = dp.createDialog(f"vnd.sun.star.script:{libr_dlg}{location}")
-    return dlg
 
 def get_cursor_range_start(cursor):
     return cursor.Start
@@ -191,13 +177,6 @@ def get_paragraph_index(doc, paragraph):
         if paragraph.String == p.String:
             return i
     return None
-
-def create_instance(name, with_context=False):
-    if with_context:
-        instance = SM.createInstanceWithContext(name, CTX)
-    else:
-        instance = SM.createInstance(name)
-    return instance
 
 def docs_are_compatible(two_docs):
     paragraph_styles = dict()
@@ -256,27 +235,6 @@ def scroll_to_inactive_cursor_location(doc_active, ipara_active, doc_inactive, i
     if ct == max_scroll_lines:
         msgbox(f"Warning: Stopped early. The window has scrolled the maximum number of allowed lines: {max_scroll_lines}.")
 
-def dialogTest(*args):
-    # dp = SM.createInstanceWithContext(_DLG_PROVIDER, CTX)
-    dp = create_instance(_DLG_PROVIDER, with_context=True)
-    libr_dlg = "Standard.DlgScrollSync"
-    location = '?location=application'
-    ui = dp.createDialog(f"vnd.sun.star.script:{libr_dlg}{location}")
-    ui.Title = "Python X[any]Listener"
-    b1Ctl = ui.getControl(_MY_BUTTON)
-    b2Ctl = ui.getControl(_MY_BUTTON2)
-    act = ActionListener()
-    b1Ctl.addActionListener(act)
-    b2Ctl.addActionListener(act)
-    rc = ui.execute()
-    if rc == OK:
-        MsgBox("User clicked 'OK'")
-    elif rc == CANCEL:
-        MsgBox("User clicked 'Cancel'")
-    ui.dispose()
-    b1Ctl.removeActionListener(act)
-    b2Ctl.removeActionListener(act)
-
 def updateInactiveDocCursorPosition():
     desktop = get_desktop() # REMOVE
     # Note: Doc indexing seems to be in reverse order of opening; i.e. last opened is i=0.
@@ -310,32 +268,39 @@ def updateInactiveDocCursorPosition():
     # scroll_to_inactive_cursor_location(doc_active, ipara_active, doc_inactive, ipara_inactive, cur_inactive, vsb_inactive)
     scroll_to_active_scrollbar_value(vsb_active, vsb_inactive)
 
+def disableScrollSync():
+    """ Disable page synchronization. """
+    # TODO: Not yet implemented.
+    # Emit a signal/event that is caught and handled by the other macros?
+
 def updateByScrollbarPercentage():
-    """Scroll the inactive document the same percent distance as the active document."""
-    app = ScrollSync()
+    """ Scroll the inactive document the same percent distance as the active document. """
+    # TODO: Fix docstrings so that "Description" works properly.
+    app = ScrollSync('ScrollbarPercentage')
     if app.error:
         return
     app.inactive.set_rel_scrollbar_pos(app.active.get_rel_scrollbar_pos())
 
 def updateByScrollbarValue():
-    """Scroll the inactive document to the same line number as the active document."""
-    app = ScrollSync()
+    """ Scroll the inactive document to the same line number as the active document. """
+    # TODO: Fix docstrings so that "Description" works properly.
+    app = ScrollSync('ScrollbarValue')
     if app.error:
         return
     app.inactive.set_abs_scrollbar_pos(app.active.scroll_position)
 
 def updateByHeadingPosition():
-    app = ScrollSync()
-    # TODO.
+    app = ScrollSync('HeadingPosition')
+    # TODO: Not yet implemented.
 
 def updateByParagraphPosition():
-    app = ScrollSync()
-    # TODO.
+    app = ScrollSync('ParagraphPosition')
+    # TODO: Not yet implemented.
 
 g_exportedScripts = (
+    # disableScrollSync,
     updateByScrollbarPercentage,
     updateByScrollbarValue,
     # updateByHeadingPosition,
     # updateByParagraphPosition,
-    dialogTest,
 )
