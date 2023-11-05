@@ -1,0 +1,22 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<description xmlns="http://openoffice.org/extensions/description/2006" xmlns:dep="http://openoffice.org/extensions/description/2006" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <!--Packaged by oxtbuild v0.1.3, https://github.com/sil-car/oxtbuild--><!--Packaged by oxtbuild v0.1.2, https://github.com/sil-car/oxtbuild-->
+  <!--Reference: https://wiki.documentfoundation.org/Documentation/DevGuide/Extensions#description.xml-->
+  <identifier value="org.sil-car.ScrollSync"/>
+  <version value="0.1"/>
+  <platform value="all"/>
+  <registration>
+    <simple-license accept-by="admin" suppress-on-update="true">
+      <license-text xlink:href="LICENSE.txt" lang="en"/>
+    </simple-license>
+  </registration>
+  <dependencies>
+    <OpenOffice.org-minimal-version value="3.0" dep:name="OpenOffice.org 3.0"/>
+  </dependencies>
+  <publisher>
+    <name xlink:href="https://github.com/sil-car/scroll-sync" lang="en">SIL International (nate_marti@sil.org)</name>
+  </publisher>
+  <display-name>
+    <name lang="en">ScrollSync</name>
+  </display-name>
+</description>
