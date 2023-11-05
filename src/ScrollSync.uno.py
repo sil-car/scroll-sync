@@ -1,4 +1,4 @@
-import msgbox as util
+# import logging
 import uno
 import unohelper
 
@@ -6,16 +6,42 @@ from com.sun.star.awt import MessageBoxButtons as MSG_BUTTONS
 from com.sun.star.awt import XAdjustmentListener
 from com.sun.star.awt import ActionEvent
 from com.sun.star.lang import EventObject
+from com.sun.star.task import XJobExecutor
 
 # References:
-#   - UNO API: https://api.libreoffice.org/docs/idl/ref/
+#   - UNO API: https://api.libreoffice.org [/docs/idl/ref/]
 #   - OOO Writer API: https://wiki.openoffice.org/wiki/Writer/API/
 #   - https://www.pitonyak.org/oo.php
 #   - https://wiki.documentfoundation.org/Macros/Python_Design_Guide
-#   - https://help.libreoffice.org/6.3/en-US/text/sbasic/python/python_programming.html
+#   - https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_programming.html
 
+PYUNO_LOGLEVEL = 'ARGS'
+PYUNO_LOGTARGET = "file:///tmp/LO-ScrollSync"
 
+'''
+class Logger_decorator():
+    def __init__(self, function):
+        LOGLEVEL = 10
+        self.function = function
+        self.logger = logging.getLogger(self.function.__name__)
+        self.fh = logging.FileHandler('ScrollSync.log', mode='w')                                             
+        self.fh.setLevel(LOGLEVEL)
+        formatter = logging.Formatter(
+            fmt='%(asctime)s:%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
+            datefmt='%Y-%m-%d-%H:%M:%S',
+        )
+        self.fh.setFormatter(formatter)
+        self.logger.addHandler(self.fh)
+
+    def __call__(self, *args, **kwargs):
+        try:
+            return self.function(*args,**kwargs)
+        except Exception as ex:
+            print(ex)
+            self.logger.exception(ex)
+'''
 class AdjustmentListener(unohelper.Base, XAdjustmentListener):
+    # Ref: https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_listener.html
     def __init__(self, sync_type, active_doc, inactive_doc):
         self.sync_type = sync_type
         self.active_doc = active_doc
@@ -33,26 +59,37 @@ class AdjustmentListener(unohelper.Base, XAdjustmentListener):
     def disposing(self, evt: EventObject):
         pass
 
-class ScrollSync():
-    def __init__(self, sync_type):
-        self.sync_type = sync_type
+class ScrollSyncJob(unohelper.Base, XJobExecutor):
+    def __init__(self, ctx):
+        self.ctx = ctx
         self.error = False
-        self.ctx = uno.getComponentContext()
-        self.smgr = self.ctx.ServiceManager
 
+    # @Logger_decorator
+    def trigger(self, sync_type):
+        self.sync_type = sync_type
+        self.smgr = self.ctx.ServiceManager
         self.desktop = self.smgr.createInstanceWithContext('com.sun.star.frame.Desktop', self.ctx)
         self.tk = self.smgr.createInstanceWithContext('com.sun.star.awt.Toolkit', self.ctx)
         self.parent = self.tk.getDesktopWindow()
+
         self.active, self.inactive = self.get_docs()
         l_active = AdjustmentListener(self.sync_type, self.active, self.inactive)
         l_inactive = AdjustmentListener(self.sync_type, self.inactive, self.active)
         self.active.scrollbar.addAdjustmentListener(l_active)
         self.inactive.scrollbar.addAdjustmentListener(l_inactive)
+        # Do a nasty thing before exiting the python process. In case the
+        # last call is a oneway call (e.g. see idl-spec of insertString),
+        # it must be forced out of the remote-bridge caches before python
+        # exits the process. Otherwise, the oneway call may or may not reach
+        # the target object.
+        # I do this here by calling a cheap synchronous call (getPropertyValue).
+        # Ref: https://www.openoffice.org/udk/python/python-bridge.html
+        # ctx.ServiceManager
 
     def get_docs(self):
         text_docs = [d for d in self.desktop.Components if d.supportsService('com.sun.star.text.TextDocument')]
         if len(text_docs) != 2:
-            self.msgbox("There needs to be exactly two Text documents open to run this macro.", 'errorbox')
+            self.msgbox("ScrollSync requires two open Text documents to run.", 'errorbox')
             self.error = True
             return None, None
         # TODO: Change "compatible" to mean "same initial paragraph styles IF syncing by heading/paragraph"
@@ -158,11 +195,6 @@ class ScrollDocument():
         absy = int(float(value) * totaly)
         self.set_abs_scrollbar_pos(absy)
 
-
-def MsgBox(txt: str):
-    mb = util.MsgBox(uno.getComponentContext())
-    mb.addButton("OK")
-    mb.show(txt, 0, "Python")
 
 def get_cursor_range_start(cursor):
     return cursor.Start
@@ -276,18 +308,20 @@ def disableScrollSync():
 def updateByScrollbarPercentage():
     """ Scroll the inactive document the same percent distance as the active document. """
     # TODO: Fix docstrings so that "Description" works properly.
-    app = ScrollSync('ScrollbarPercentage')
+    app = ScrollSync()
     if app.error:
         return
-    app.inactive.set_rel_scrollbar_pos(app.active.get_rel_scrollbar_pos())
+    app.trigger('ScrollbarPercentage')
+    # app.inactive.set_rel_scrollbar_pos(app.active.get_rel_scrollbar_pos())
 
 def updateByScrollbarValue():
     """ Scroll the inactive document to the same line number as the active document. """
     # TODO: Fix docstrings so that "Description" works properly.
-    app = ScrollSync('ScrollbarValue')
+    app = ScrollSync()
     if app.error:
         return
-    app.inactive.set_abs_scrollbar_pos(app.active.scroll_position)
+    app.trigger('ScrollbarValue')
+    # app.inactive.set_abs_scrollbar_pos(app.active.scroll_position)
 
 def updateByHeadingPosition():
     app = ScrollSync('HeadingPosition')
@@ -297,6 +331,7 @@ def updateByParagraphPosition():
     app = ScrollSync('ParagraphPosition')
     # TODO: Not yet implemented.
 
+
 g_exportedScripts = (
     # disableScrollSync,
     updateByScrollbarPercentage,
@@ -304,3 +339,36 @@ g_exportedScripts = (
     # updateByHeadingPosition,
     # updateByParagraphPosition,
 )
+
+g_ImplementationHelper = unohelper.ImplementationHelper()
+g_ImplementationHelper.addImplementation(
+    ScrollSyncJob,
+    "org.sil-car.ScrollSync.ScrollSync",
+    ("com.sun.star.task.Job",),
+)
+
+
+# if __name__ == "__main__":
+#     import os
+ 
+#     # Start OpenOffice, listen for connections and open testing document
+#     os.system( "/etc/openoffice.org-1.9/program/soffice '-accept=socket,host=localhost,port=2002;urp;' -writer ./WaveletTest.odt &" )
+ 
+#     # Get local context info
+#     localContext = uno.getComponentContext()
+#     resolver = localContext.ServiceManager.createInstanceWithContext(
+#         "com.sun.star.bridge.UnoUrlResolver", localContext )
+ 
+#     ctx = None
+ 
+#     # Wait until the OpenOffice starts and connection is established
+#     while ctx == None:
+#         try:
+#             ctx = resolver.resolve(
+#                 "uno:socket,host=localhost,port=2002;urp;StarOffice.ComponentContext" )
+#         except:
+#             pass
+ 
+#     # Trigger our job
+#     wavelet = Wavelet( ctx )
+#     wavelet.trigger( () )
