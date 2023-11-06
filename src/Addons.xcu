@@ -1,7 +1,8 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <oor:component-data xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" oor:name="Addons" oor:package="org.openoffice.Office">
   <node oor:name="AddonUI">
-    <node oor:name="OfficeMenuBar">
+    <!-- <node oor:name="OfficeMenuBar"> -->
+    <node oor:name="AddonMenu">
       <node oor:name="org.sil-car.ScrollSync" oor:op="replace">
         <prop oor:name="Title" oor:type="xs:string">
           <value>ScrollSync</value>
@@ -19,8 +20,8 @@
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
               <value/>
-              <value xml:lang="en-US">Absolute sync</value>
-              <value xml:lang="fr">Synchro. absolute</value>
+              <value xml:lang="en-US">by scroll distance</value>
+              <value xml:lang="fr">par distance de défilement</value>
             </prop>
             <!-- <prop oor:name="Target" oor:type="xs:string">
               <value>_self</value>
@@ -32,8 +33,8 @@
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
               <value/>
-              <value xml:lang="en-US">Relative sync</value>
-              <value xml:lang="fr">Synchro. rélative</value>
+              <value xml:lang="en-US">py scroll percentage</value>
+              <value xml:lang="fr">par pourcentage de défilement</value>
             </prop>
             <!-- <prop oor:name="Target" oor:type="xs:string">
               <value>_self</value>
