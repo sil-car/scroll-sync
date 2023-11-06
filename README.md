@@ -8,7 +8,7 @@ document or by percentage of total document length.
 
 ## Demo
 
-https://raw.githubusercontent.com/sil-car/scroll-sync/main/data/demo.mp4
+https://github.com/sil-car/scroll-sync/assets/23388501/630089ac-cdca-41f6-b61b-44514f9a2e14
 
 ## References
 
