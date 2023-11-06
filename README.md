@@ -3,6 +3,13 @@
 Scroll position can be synchronized either by distance from the beginning of the
 document or by percentage of total document length.
 
+![menu](data/menu.png)
+![scrolling](data/scrolling.png)
+
+## Demo
+
+
+
 ## References
 
 ### Scripting
