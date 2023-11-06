@@ -1,9 +1,14 @@
 ## ToDo List
-- [ ] Add a menu entry for activating sync/selecting sync method.
-    - choose to sync inactive window by:
-      - scrollbar
-        - by position (maybe useful if the active document is just a beginning part of the full document)
-        - by percentage (maybe useful for comparing two completed documents)
-      - content location
-        - by headings (maybe useful for easily finding related sections but where paragraph counts could vary within a section)
-        - by all paragraphs (maybe useful if both files have exact same paragraph structure)
+- [ ] Allow user to change scroll method without reopening libreoffice.
+  - This requires figuring out "permanence" between script activations.
+- [x] Add a menu entry for activating sync/selecting sync method.
+  - choose to sync inactive window by:
+    - [x] scrollbar
+      - [x] by position (maybe useful if the active document is just a beginning part of the full document)
+        - position is based on distance from the start of the document
+      - [x] by percentage (maybe useful for comparing two completed documents)
+        - "percentage" is based on the position of the <i>top</i> of the scroll bar, so it may seem glitchy on a relatively short document (i.e. just 2 or 3 pages)
+    - [ ] content location
+      - by headings (maybe useful for easily finding related sections but where paragraph counts could vary within a section)
+      - by all paragraphs (maybe useful if both files have exact same paragraph structure)
+    - [ ] disabled (default action)
