@@ -1,6 +1,7 @@
 # Scroll Two LibreOffice Text Documents Simultaneously
 
-This is currently a work-in-progress...
+Scroll position can be synchronized either by distance from the beginning of the
+document or by percentage of total document length.
 
 ## References
 
