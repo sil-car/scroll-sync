@@ -15,9 +15,6 @@ from com.sun.star.task import XJobExecutor
 #   - https://wiki.documentfoundation.org/Macros/Python_Design_Guide
 #   - https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_programming.html
 
-PYUNO_LOGLEVEL = 'ARGS'
-PYUNO_LOGTARGET = "file:///tmp/LO-ScrollSync"
-
 '''
 class Logger_decorator():
     def __init__(self, function):
@@ -40,7 +37,7 @@ class Logger_decorator():
             print(ex)
             self.logger.exception(ex)
 '''
-class AdjustmentListener(unohelper.Base, XAdjustmentListener):
+class AdjustmentListener(XAdjustmentListener, unohelper.Base):
     # Ref: https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_listener.html
     def __init__(self, sync_type, active_doc, inactive_doc):
         self.sync_type = sync_type
@@ -61,11 +58,13 @@ class AdjustmentListener(unohelper.Base, XAdjustmentListener):
 
 class ScrollSyncJob(unohelper.Base, XJobExecutor):
     def __init__(self, ctx):
+        print("ScrollSyncJob init activated")
         self.ctx = ctx
         self.error = False
 
     # @Logger_decorator
     def trigger(self, sync_type):
+        print("ScrollSyncJob trigger activated")
         self.sync_type = sync_type
         self.smgr = self.ctx.ServiceManager
         self.desktop = self.smgr.createInstanceWithContext('com.sun.star.frame.Desktop', self.ctx)
@@ -73,10 +72,17 @@ class ScrollSyncJob(unohelper.Base, XJobExecutor):
         self.parent = self.tk.getDesktopWindow()
 
         self.active, self.inactive = self.get_docs()
-        l_active = AdjustmentListener(self.sync_type, self.active, self.inactive)
-        l_inactive = AdjustmentListener(self.sync_type, self.inactive, self.active)
-        self.active.scrollbar.addAdjustmentListener(l_active)
-        self.inactive.scrollbar.addAdjustmentListener(l_inactive)
+        # if self.active.scroll_listener is not None:
+        #     print("Removing old listener.")
+        #     self.active.scrollbar.removeAdjustmentListener(self.active.scroll_listener)
+        # if self.inactive.scroll_listener is not None:
+        #     print("Removing old listener.")
+        #     self.inactive.scrollbar.removeAdjustmentListener(self.inactive.scroll_listener)
+        self.active.scroll_listener = AdjustmentListener(self.sync_type, self.active, self.inactive)
+        self.inactive.scroll_listener = AdjustmentListener(self.sync_type, self.inactive, self.active)
+        self.active.scrollbar.addAdjustmentListener(self.active.scroll_listener)
+        self.inactive.scrollbar.addAdjustmentListener(self.inactive.scroll_listener)
+
         # Do a nasty thing before exiting the python process. In case the
         # last call is a oneway call (e.g. see idl-spec of insertString),
         # it must be forced out of the remote-bridge caches before python
@@ -123,6 +129,8 @@ class ScrollDocument():
         self.smgr = self.ctx.ServiceManager
 
         self.doc = doc
+        self.frm = self.doc.CurrentController.Frame
+        self.wdw = self.frm.getComponentWindow()
         self.title = self.doc.Title
         self.view_cursor = self.get_view_cursor()
         self.scrollbar = self.get_scrollbar()
@@ -152,8 +160,7 @@ class ScrollDocument():
         return None
 
     def get_view_cursor(self):
-        cursor = self.doc.CurrentController.getViewCursor()
-        return cursor
+        return self.doc.CurrentController.getViewCursor()
 
     def get_abs_cursor_pos(self):
         pass
