@@ -1,6 +1,6 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <description xmlns="http://openoffice.org/extensions/description/2006" xmlns:dep="http://openoffice.org/extensions/description/2006" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <!--Packaged by oxtbuild v0.1.3, https://github.com/sil-car/oxtbuild--><!--Packaged by oxtbuild v0.1.2, https://github.com/sil-car/oxtbuild-->
+  <!--Packaged by oxtbuild v0.1.3, https://github.com/sil-car/oxtbuild-->
   <!--Reference: https://wiki.documentfoundation.org/Documentation/DevGuide/Extensions#description.xml-->
   <identifier value="org.sil-car.ScrollSync"/>
   <version value="0.1"/>
