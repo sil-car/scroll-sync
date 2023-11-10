@@ -33,7 +33,7 @@
             </prop>
             <prop oor:name="Title" oor:type="xs:string">
               <value/>
-              <value xml:lang="en-US">py scroll percentage</value>
+              <value xml:lang="en-US">by scroll percentage</value>
               <value xml:lang="fr">par pourcentage de défilement</value>
             </prop>
             <!-- <prop oor:name="Target" oor:type="xs:string">
