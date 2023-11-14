@@ -1,6 +1,10 @@
-# import logging
+import logging
+import platform
+import re
 import uno
 import unohelper
+
+from pathlib import Path
 
 from com.sun.star.awt import MessageBoxButtons as MSG_BUTTONS
 from com.sun.star.awt import XAdjustmentListener
@@ -15,42 +19,61 @@ from com.sun.star.task import XJobExecutor
 #   - https://wiki.documentfoundation.org/Macros/Python_Design_Guide
 #   - https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_programming.html
 
-'''
-class Logger_decorator():
-    def __init__(self, function):
-        LOGLEVEL = 10
-        self.function = function
-        self.logger = logging.getLogger(self.function.__name__)
-        self.fh = logging.FileHandler('ScrollSync.log', mode='w')                                             
-        self.fh.setLevel(LOGLEVEL)
-        formatter = logging.Formatter(
-            fmt='%(asctime)s:%(levelname)s:%(filename)s:%(lineno)d:%(message)s',
-            datefmt='%Y-%m-%d-%H:%M:%S',
-        )
-        self.fh.setFormatter(formatter)
-        self.logger.addHandler(self.fh)
+LOG_LEVELS = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL,
+}
 
-    def __call__(self, *args, **kwargs):
-        try:
-            return self.function(*args,**kwargs)
-        except Exception as ex:
-            print(ex)
-            self.logger.exception(ex)
-'''
+OXT_DIR = Path(__file__).parent
+LO_USER_DIR = OXT_DIR.parents[4]
+CFG_FILE = LO_USER_DIR / 'ScrollSync-config.txt'
+LOG_FILE = LO_USER_DIR / 'ScrollSync-log.txt'
+USER_CONFIG = dict()
+if CFG_FILE.is_file():
+    config_text = CFG_FILE.read_text()
+    for l in config_text.split('\n'):
+        l = l.strip()
+        if l[0] == '#' or '=' not in l:
+            continue
+        k, v = l.split('=')
+        if k.upper() == 'LOG_LEVEL':
+            v = LOG_LEVELS.get(v.upper(), logging.INFO)
+        USER_CONFIG[k.strip()] = v.strip()
+LOG_LEVEL = USER_CONFIG.get('LOG_LEVEL', logging.INFO)
+LOG_FMTR = logging.Formatter(
+    fmt='%(asctime)s:%(levelname)s:%(filename)s:%(lineno)d:%(funcName)s:%(message)s',
+    datefmt='%Y-%m-%d-%H:%M:%S',
+)
+LOG_FH = logging.FileHandler(LOG_FILE, encoding='utf8', mode='w')
+LOG_FH.setFormatter(LOG_FMTR)
+LOG_FH.setLevel(LOG_LEVEL)
+
+
 class AdjustmentListener(XAdjustmentListener, unohelper.Base):
     # Ref: https://help.libreoffice.org/latest/en-US/text/sbasic/python/python_listener.html
     def __init__(self, sync_type, active_doc, inactive_doc):
+        # Set up logging.
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(LOG_LEVEL)
+        self.logger.addHandler(LOG_FH)
+
         self.sync_type = sync_type
+        self.logger.debug(f"AdjustmentListener initialized.")
         self.active_doc = active_doc
         self.inactive_doc = inactive_doc
 
     def adjustmentValueChanged(self, evt: ActionEvent):
-        # print(evt)
+        self.logger.debug('Event caught.')
         if self.sync_type == 'ScrollbarPercentage':
             new_pos = self.active_doc.get_rel_scrollbar_pos()
+            self.logger.debug(f"New position (P): {new_pos}")
             self.inactive_doc.set_rel_scrollbar_pos(new_pos)
         elif self.sync_type == 'ScrollbarValue':
             new_pos = self.active_doc.get_abs_scrollbar_pos()
+            self.logger.debug(f"New position (I): {new_pos}")
             self.inactive_doc.set_abs_scrollbar_pos(new_pos)
 
     def disposing(self, evt: EventObject):
@@ -58,20 +81,66 @@ class AdjustmentListener(XAdjustmentListener, unohelper.Base):
 
 class ScrollSyncJob(unohelper.Base, XJobExecutor):
     def __init__(self, ctx):
-        print("ScrollSyncJob init activated")
-        self.ctx = ctx
         self.error = False
+        desc = OXT_DIR / 'description.xml'
+        m = re.search(r'(?<=version value=")[0-9\.]+', desc.read_text())
+        if m is not None:
+            self.version = m[0]
+        else:
+            self.version = 'unknown'
 
-    # @Logger_decorator
-    def trigger(self, sync_type):
-        print("ScrollSyncJob trigger activated")
-        self.sync_type = sync_type
+        # Set LO services.
+        self.ctx = ctx
         self.smgr = self.ctx.ServiceManager
+
+        # Get LO version.
+        cfg = self.smgr.createInstance('com.sun.star.configuration.ConfigurationProvider')
+        arg = uno.createUnoStruct('com.sun.star.beans.PropertyValue')
+        arg.Name = "nodepath"
+        arg.Value = "/org.openoffice.Setup/Product"
+        node = cfg.createInstanceWithArguments("com.sun.star.configuration.ConfigurationAccess", (arg,))
+        lo_ver = node.getByName("ooSetupVersion")
+        del node
+        del cfg
+        del arg
+
+        # Set up logging.
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(LOG_LEVEL)
+        self.logger.addHandler(LOG_FH)
+
+        # Log basic info.
+        pf = platform.uname()
+        self.logger.info(f"OS: {pf.system} / {pf.release} / {pf.version}")
+        self.logger.info(f"LO version: {lo_ver}")
+        self.logger.info(f"Python version: {platform.python_version()}")
+        self.logger.info(f"ScrollSync version: {self.version}")
+        self.logger.debug("ScrollSyncJob initialized.")
+
+    def trigger(self, sync_type):
+        self.logger.debug("ScrollSyncJob triggered.")
+        self.sync_type = sync_type
+        self.logger.info(f"Sync type: {sync_type}")
         self.desktop = self.smgr.createInstanceWithContext('com.sun.star.frame.Desktop', self.ctx)
+        self.components = [c for c in self.desktop.Components]
+        self.logger.debug(f"Found {len(self.components)} LO desktop components.")
         self.tk = self.smgr.createInstanceWithContext('com.sun.star.awt.Toolkit', self.ctx)
         self.parent = self.tk.getDesktopWindow()
+        self.logger.debug(f"Parent window acquired.")
 
+        # Get documents.
         self.active, self.inactive = self.get_docs()
+        # self.active = ScrollDocument(self.desktop.getCurrentComponent(), self.ctx)
+        if self.active is None:
+            self.logger.warning("No active document found.")
+        else:
+            self.logger.info(f"Active doc name: {self.active.doc.Title}")
+        if self.inactive is None:
+            self.logger.warning("No inactive document found.")
+        else:
+            self.logger.info(f"Inactive doc name: {self.inactive.doc.Title}")
+
+        # Configure listeners.
         # if self.active.scroll_listener is not None:
         #     print("Removing old listener.")
         #     self.active.scrollbar.removeAdjustmentListener(self.active.scroll_listener)
@@ -82,6 +151,7 @@ class ScrollSyncJob(unohelper.Base, XJobExecutor):
         self.inactive.scroll_listener = AdjustmentListener(self.sync_type, self.inactive, self.active)
         self.active.scrollbar.addAdjustmentListener(self.active.scroll_listener)
         self.inactive.scrollbar.addAdjustmentListener(self.inactive.scroll_listener)
+        self.logger.info('AdjustmentListeners added to vertical scrollbars.')
 
         # Do a nasty thing before exiting the python process. In case the
         # last call is a oneway call (e.g. see idl-spec of insertString),
@@ -94,8 +164,9 @@ class ScrollSyncJob(unohelper.Base, XJobExecutor):
 
     def get_docs(self):
         text_docs = [d for d in self.desktop.Components if d.supportsService('com.sun.star.text.TextDocument')]
+        self.logger.debug(f"Found {len(text_docs)} open Text documents.")
         if len(text_docs) != 2:
-            self.msgbox("ScrollSync requires two open Text documents to run.", 'errorbox')
+            self.msgbox("ScrollSync requires exactly two open Text documents to run.", 'errorbox')
             self.error = True
             return None, None
         # TODO: Change "compatible" to mean "same initial paragraph styles IF syncing by heading/paragraph"
@@ -123,81 +194,117 @@ class ScrollSyncJob(unohelper.Base, XJobExecutor):
 
 class ScrollDocument():
     def __init__(self, doc=None, ctx=None):
-        self.ctx = None
-        if ctx is not None:
-            self.ctx = ctx
-        self.smgr = self.ctx.ServiceManager
+        # Set up logging.
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(LOG_LEVEL)
+        self.logger.addHandler(LOG_FH)
 
         self.doc = doc
+        self.title = self.doc.Title
+        self.logger.info(f"Found Text Document: {self.title}")
+        # self.ctx = None
+        # if ctx is not None:
+        #     self.ctx = ctx
+        # else:
+        #     logger.warning(f"Component context not provided for Text Document \"{self.title}\"")
+        # self.smgr = self.ctx.ServiceManager
+
         self.frm = self.doc.CurrentController.Frame
         self.wdw = self.frm.getComponentWindow()
-        self.title = self.doc.Title
-        self.view_cursor = self.get_view_cursor()
+        # self.view_cursor = self.get_view_cursor()
         self.scrollbar = self.get_scrollbar()
-        self.scroll_percent = self.get_rel_scrollbar_pos()
+        if self.scrollbar is None:
+            self.logger.error("Unable to get scrollbar control.")
+            return
         self.scroll_position = self.get_abs_scrollbar_pos()
-        self.cursor_percent = None
-        self.cursor_position = None
-        self.paragraph_styles = []
+        self.scroll_percent = self.get_rel_scrollbar_pos()
+        # self.cursor_percent = None
+        # self.cursor_position = None
+        # self.paragraph_styles = []
 
-    def get_paragraphs(self):
-        paragraphs = []
-        text = self.doc.Text
-        para_enum = text.createEnumeration()
-        while para_enum.hasMoreElements():
-            para = para_enum.nextElement()
-            paragraphs.append(para)
-        return paragraphs
+    # def get_paragraphs(self):
+    #     paragraphs = []
+    #     text = self.doc.Text
+    #     para_enum = text.createEnumeration()
+    #     while para_enum.hasMoreElements():
+    #         para = para_enum.nextElement()
+    #         paragraphs.append(para)
+    #     return paragraphs
 
     def get_scrollbar(self):
-        win_ctx = self.doc.CurrentController.Frame.getComponentWindow().getAccessibleContext()
-        ch_ctx = win_ctx.getAccessibleChild(0).getAccessibleContext()
-        for i in range(ch_ctx.getAccessibleChildCount()):
-            c = ch_ctx.getAccessibleChild(i)
-            c_ctx = c.AccessibleContext
-            if c_ctx.ImplementationName == 'com.sun.star.comp.toolkit.AccessibleScrollBar' and c.Orientation == 1:
-                return c
-        return None
+        def find_vert_scrollbar(obj, d=0):
+            found = None
+            ctx = obj.AccessibleContext
+            # self.logger.debug(f"d:{d}; {ctx.ImplementationName}")
+            if ctx.ImplementationName == 'com.sun.star.comp.toolkit.AccessibleScrollBar':
+                # self.logger.debug(f"{obj.Orientation}")
+                if obj.Orientation == 1:
+                    self.logger.debug(f"Found vertical scrollbar.")
+                    return obj
+            else:
+                for i in range(ctx.getAccessibleChildCount()):
+                    c = ctx.getAccessibleChild(i)
+                    found = find_vert_scrollbar(c, d+1)
+                    if found is not None:
+                        return found
 
-    def get_view_cursor(self):
-        return self.doc.CurrentController.getViewCursor()
+        return find_vert_scrollbar(self.wdw)
 
-    def get_abs_cursor_pos(self):
-        pass
 
-    def set_abs_cursor_pos(self, value):
-        self.view_cursor.gotoRange(value, False)
+    # def get_view_cursor(self):
+    #     return self.doc.CurrentController.getViewCursor()
 
-    def get_rel_cursor_pos(self):
-        # Record current position details.
-        range_cur = self.view_cursor.getStart()
-        pos_cur = self.view_cursor.getPosition()
-        # Move cursor to end of doc to get end position; move back.
-        set_cursor_position(self.view_cursor, self.doc.Text.End)
-        pos_end = self.view_cursor.getPosition()
-        set_cursor_position(self.view_cursor, range_cur)
-        # Calculate.
-        totaly = float(pos_end.Y)
-        currenty = float(pos_cur.Y)
-        relativey = round(currenty / totaly, 2)
-        return relativey
+    # def get_abs_cursor_pos(self):
+    #     pass
 
-    def set_rel_cursor_pos(self, value):
-        pass
+    # def set_abs_cursor_pos(self, value):
+    #     self.view_cursor.gotoRange(value, False)
+
+    # def get_rel_cursor_pos(self):
+    #     # Record current position details.
+    #     range_cur = self.view_cursor.getStart()
+    #     pos_cur = self.view_cursor.getPosition()
+    #     # Move cursor to end of doc to get end position; move back.
+    #     set_cursor_position(self.view_cursor, self.doc.Text.End)
+    #     pos_end = self.view_cursor.getPosition()
+    #     set_cursor_position(self.view_cursor, range_cur)
+    #     # Calculate.
+    #     totaly = float(pos_end.Y)
+    #     currenty = float(pos_cur.Y)
+    #     relativey = round(currenty / totaly, 2)
+    #     return relativey
+
+    # def set_rel_cursor_pos(self, value):
+    #     pass
 
     def get_abs_scrollbar_pos(self):
-        return self.scrollbar.AccessibleContext.CurrentValue
+        self.logger.debug(f"Getting absolute scrollbar position for \"{self.title}\"")
+        # self.logger.debug(f"Position: {self.scrollbar.AccessibleContext.CurrentValue}")
+        # pf = platform.uname()
+        # if pf.system == 'Windows' and pf.release == '10':
+        #     self.logger.debug(f"Special handling for Windows 10.")
+        #     self.logger.debug(dir(self.scrollbar))
+        #     pos = int(self.scrollbar.getCurrentValue())
+        # else:
+        #     pos = int(self.scrollbar.getAccessibleContext().getCurrentValue())
+        # self.logger.debug(f"Position: {pos}")
+        return int(self.scrollbar.AccessibleContext.CurrentValue)
+        # return pos
 
     def set_abs_scrollbar_pos(self, value):
+        self.logger.debug(f"Setting absolute scrollbar position to {value} for \"{self.title}\"")
         self.scrollbar.AccessibleContext.setCurrentValue(int(value))
 
     def get_rel_scrollbar_pos(self):
+        self.logger.debug(f"Calculating relative scrollbar position for \"{self.title}\"")
         totaly = float(self.scrollbar.AccessibleContext.MaximumValue)
-        currenty = float(self.scrollbar.AccessibleContext.CurrentValue)
+        # currenty = float(self.scrollbar.AccessibleContext.CurrentValue)
+        currenty = float(self.get_abs_scrollbar_pos())
         relativey = round(currenty / totaly, 2)
         return relativey
 
     def set_rel_scrollbar_pos(self, value):
+        self.logger.debug(f"Setting relative scrollbar position for \"{self.title}\"")
         totaly = float(self.scrollbar.AccessibleContext.MaximumValue)
         absy = int(float(value) * totaly)
         self.set_abs_scrollbar_pos(absy)
